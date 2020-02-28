@@ -1,0 +1,11 @@
+<component name="libraryTable">
+  <library name="logiled64">
+    <CLASSES>
+      <root url="jar://$PROJECT_DIR$/lib/logiled64.jar!/" />
+    </CLASSES>
+    <JAVADOC />
+    <SOURCES>
+      <root url="jar://$PROJECT_DIR$/lib/logiled64.jar!/" />
+    </SOURCES>
+  </library>
+</component>
