@@ -8,7 +8,6 @@ import sun.awt.ComponentFactory;
 
 import java.awt.*;
 import java.awt.peer.RobotPeer;
-import java.util.Objects;
 
 public class ScreenRGB {
 
@@ -18,16 +17,12 @@ public class ScreenRGB {
     public static int timeFullUpdate = 5000;
     public static float brightness = 2f;
     public static boolean optimizeAlgorithm = true;
-    public static boolean onlyDynamicScene = true;
-
+    public static boolean onlyDynamicScene = false;
 
     private static final Dimension size = Toolkit.getDefaultToolkit().getScreenSize();
     private static final Rectangle rec = new Rectangle(size);
     private static RobotPeer peer;
-
     private static boolean running = false;
-
-    private static boolean autoFullUpdate = false;
 
     static {
         try {
@@ -43,35 +38,54 @@ public class ScreenRGB {
         running = true;
         new Thread(() -> {
             SumColor staticColor = new SumColor(0, 0, 0, 1);
+            SumColor hash = new SumColor(0, 0, 0, 0);
+            Rectangle hashVector = new Rectangle(0, 0, 10, 2);
             Rectangle dynamicVector = new Rectangle(size);
-
+            boolean forceUpdate = false;
+            boolean autoFullUpdate = false;
             long lastTime = System.currentTimeMillis();
             int count = 0;
             try {
                 while (running) {
-                    if (System.currentTimeMillis() - lastTime > timeFullUpdate) {
+                    if (optimizeAlgorithm && (forceUpdate || System.currentTimeMillis() - lastTime > timeFullUpdate)) {
                         final int[] oneScreen = screenshot(rec);
+                        SumColor color = null;
                         if (!onlyDynamicScene)
                             updateLight(oneScreen);
                         final int[] twoScreen = screenshot(rec);
                         if (!onlyDynamicScene)
-                            updateLight(oneScreen);
+                            color = updateLight(oneScreen);
                         final Rectangle temp = getDynamicObject(oneScreen, twoScreen);
                         if (temp != null) {
                             autoFullUpdate = false;
                             dynamicVector = temp;
-                            if ((dynamicVector.height * dynamicVector.width) * 100 / (size.height * size.width) > upBorderFullUpdate) {
-                                System.out.println("Dynamic image very big");
+                            if ((dynamicVector.height * dynamicVector.width) * 100 / (size.height * size.width) > upBorderFullUpdate)
                                 autoFullUpdate = true;
+                            if (!onlyDynamicScene) {
+                                final int[] substringPixels = staticSubstring(twoScreen, dynamicVector);
+                                if (substringPixels == null)
+                                    staticColor = color;
+                                else
+                                    staticColor = sumColor(substringPixels);
                             }
-                            if (!onlyDynamicScene)
-                                staticColor = sumColor(staticSubstring(twoScreen, dynamicVector));
                         } else autoFullUpdate = true;
+                        if (forceUpdate) {
+                            final int wid = size.width / 100 * (100 - upBorderFullUpdate) / 2;
+                            hash = sumColor(screenshot(hashVector = new Rectangle(dynamicVector.x > size.width -
+                                    (dynamicVector.x + dynamicVector.width) ? (dynamicVector.x - wid) / 2 :
+                                    (dynamicVector.x + dynamicVector.width + size.width - wid) / 2, (size.height - 2)
+                                    / 2, wid, 2)));
+                            forceUpdate = false;
+                        }
                         System.out.println("FPS: " + (count / ((System.currentTimeMillis() - lastTime) / 1000f)));
                         count = 0;
                         lastTime = System.currentTimeMillis();
                     }
-                    if (!optimizeAlgorithm || autoFullUpdate)
+                    if (optimizeAlgorithm && !hash.equals(sumColor(screenshot(hashVector)))) {
+                        forceUpdate = true;
+                        System.out.println("Force update");
+                    }
+                    if (!optimizeAlgorithm || autoFullUpdate || forceUpdate)
                         updateLight(screenshot(rec));
                     else if (onlyDynamicScene) updateLight(screenshot(dynamicVector));
                     else updateLight(screenshot(dynamicVector), staticColor);
@@ -125,12 +139,12 @@ public class ScreenRGB {
         return new Rectangle(minX, minY, maxX - minX, maxY - minY);
     }
 
-    @NotNull
+    @Nullable
     @Contract(pure = true)
     private static int[] staticSubstring(@NotNull final int[] pixels, @NotNull final Rectangle substring) {
         final int len = pixels.length - (substring.width * substring.height);
         if (len == 0)
-            return pixels;
+            return null;
         final int[] pix = new int[len];
         int n = 0;
         for (int y = 0; y < size.height; y++) {
@@ -146,24 +160,22 @@ public class ScreenRGB {
 
     private static void updateLight(@NotNull final int[] pixels, @NotNull final SumColor correct) {
         final int len = pixels.length;
-        int r = 0;
-        int g = 0;
-        int b = 0;
+        int r = correct.r;
+        int g = correct.g;
+        int b = correct.b;
         for (int i = 0; i < len; i += skipPixels) {
             final int color = pixels[i];
             b += color & 0xFF;
             g += (color >> 8) & 0xFF;
             r += (color >> 16) & 0xFF;
         }
-        r = (int) (((r + correct.r) / ((len / skipPixels) + correct.n)) * brightness);
-        g = (int) (((g + correct.g) / ((len / skipPixels) + correct.n)) * brightness);
-        b = (int) (((b + correct.b) / ((len / skipPixels) + correct.n)) * brightness);
-
-        final float max = 100f / Math.max(255, Math.max(r, Math.max(g, b)));
+        final float state = (len / skipPixels + correct.n) / brightness;
+        final float max = 100f / Math.max(255, Math.max(r /= state, Math.max(g /= state, b /= state)));
         LogiLED.LogiLedSetLighting((int) (r * max), (int) (g * max), (int) (b * max));
     }
 
-    private static void updateLight(@NotNull final int[] pixels) {
+    @NotNull
+    private static SumColor updateLight(@NotNull final int[] pixels) {
         final int len = pixels.length;
         int r = 0;
         int g = 0;
@@ -174,12 +186,11 @@ public class ScreenRGB {
             g += (color >> 8) & 0xFF;
             r += (color >> 16) & 0xFF;
         }
-        r = (int) ((r / (len / skipPixels)) * brightness);
-        g = (int) ((g / (len / skipPixels)) * brightness);
-        b = (int) ((b / (len / skipPixels)) * brightness);
-
-        final float max = 100f / Math.max(255, Math.max(r, Math.max(g, b)));
-        LogiLED.LogiLedSetLighting((int) (r * max), (int) (g * max), (int) (b * max));
+        final float state = len / skipPixels / brightness;
+        final float max = 100f / Math.max(255, Math.max(r /= state, Math.max(g /= state, b /= state)));
+        final SumColor color = new SumColor((int) (r * max), (int) (g * max), (int) (b * max), len);
+        LogiLED.LogiLedSetLighting(color.r, color.g, color.b);
+        return color;
     }
 
     @NotNull
@@ -220,11 +231,6 @@ public class ScreenRGB {
                     g == sumColor.g &&
                     b == sumColor.b &&
                     n == sumColor.n;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hash(r, g, b, n);
         }
     }
 }
